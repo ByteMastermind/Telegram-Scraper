@@ -12,22 +12,31 @@ config = load_config()
 api_id = config['api_id']
 api_hash = config['api_hash']
 phone = config['phone']
+notification_group = config['notification_group']
 
 # Connect to Telegram
 client = TelegramClient('session_name', api_id, api_hash)
 client.start(phone=phone)
 
-def is_invitation(message_dict, group_name):
+async def send_message_to_group(group_name):
+    # Search for the group by name
+    entity = await client.get_entity(notification_group)
+    
+    message = f"An invitation link just landed to a group named {group_name}"
+
+    # Send the message
+    await client.send_message(entity, message)
+
+async def is_invitation(message_dict, group_name):
     if message_dict.get('media') and 'MessageMediaWebPage' in message_dict['media'] and "site_name='Telegram'" in message_dict['media']:
         print(f"Invitation detected in {group_name}, message id: {message_dict['id']}.")
         return True  # Invitation detected
     return False  # No invitation detected
 
-def check_invitation(message_dict, group_name):
-    is_message_invitation = is_invitation(message_dict, group_name)
+async def check_invitation(message_dict, group_name):
+    is_message_invitation = await is_invitation(message_dict, group_name)
     if is_message_invitation:
-        # Send email
-        pass
+        await send_message_to_group(group_name)
 
 async def list_groups_and_channels():
     dialogs = await client.get_dialogs()
@@ -46,7 +55,8 @@ async def list_groups_and_channels():
     while True:
         print("\nSelect a group or channel to scrape (or enter 0 to finish):")
         for idx, dialog in enumerate(groups_and_channels, start=1):
-            print(f"{idx}. {dialog.name}")
+            if dialog.name != notification_group:
+                print(f"{idx}. {dialog.name}")
 
         try:
             choice = int(input("Enter the number: "))
@@ -69,7 +79,7 @@ async def list_groups_and_channels():
     return selected_groups
 
 
-def save_message_to_json(message, filename, group_name):
+async def save_message_to_json(message, filename, group_name):
     """Appends a new message to the JSON file."""
     try:
         # Load existing messages from the file
@@ -109,7 +119,7 @@ def save_message_to_json(message, filename, group_name):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(messages_data, f, ensure_ascii=False, indent=4)
 
-    check_invitation(message_dict, group_name)
+    await check_invitation(message_dict, group_name)
 
 
 async def main():
@@ -127,7 +137,7 @@ async def main():
         # Construct the filename using the group name
         safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group_name)
         filename = f'{safe_title}_messages.json'
-        save_message_to_json(event.message, filename, group_name) 
+        await save_message_to_json(event.message, filename, group_name) 
 
 
     for group in groups:
@@ -146,7 +156,7 @@ async def main():
             messages_data = []
             print(f"Scraping initial messages from {group.title}...")
             async for message in client.iter_messages(group, limit=2000):
-                save_message_to_json(message, filename, group.title)
+                await save_message_to_json(message, filename, group.title)
             print(f"Initial messages saved to {filename}")
 
         print(f"Listening for new messages in {group.title}...")
