@@ -1,0 +1,21 @@
+# Python-related
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+env/
+venv/
+.venv/
+
+# Logs and output
+*.log
+*.out
+*json
+
+# Config file
+config.json
+
+# Telethon session files
+session_name.session*
