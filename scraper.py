@@ -17,10 +17,22 @@ phone = config['phone']
 client = TelegramClient('session_name', api_id, api_hash)
 client.start(phone=phone)
 
+def is_invitation(message_dict, group_name):
+    if message_dict.get('media') and 'MessageMediaWebPage' in message_dict['media'] and "site_name='Telegram'" in message_dict['media']:
+        print(f"Invitation detected in {group_name}, message id: {message_dict['id']}.")
+        return True  # Invitation detected
+    return False  # No invitation detected
+
+def check_invitation(message_dict, group_name):
+    is_message_invitation = is_invitation(message_dict, group_name)
+    if is_message_invitation:
+        # Send email
+        pass
+
 async def list_groups_and_channels():
     dialogs = await client.get_dialogs()
 
-    # Filter for groups and channels (including broadcast channels)
+    # Filter for groups and channels
     groups_and_channels = [
         dialog for dialog in dialogs
         if dialog.is_group or dialog.is_channel
@@ -28,22 +40,36 @@ async def list_groups_and_channels():
 
     if not groups_and_channels:
         print("No groups or channels found.")
-        return None
+        return []  # Return an empty list if no groups/channels are found
 
-    print("Select a group or channel to scrape:")
-    for idx, dialog in enumerate(groups_and_channels, start=1):
-        print(f"{idx}. {dialog.name}")
+    selected_groups = []
+    while True:
+        print("\nSelect a group or channel to scrape (or enter 0 to finish):")
+        for idx, dialog in enumerate(groups_and_channels, start=1):
+            print(f"{idx}. {dialog.name}")
 
-    # Get user input and handle out-of-range errors
-    choice = int(input("Enter the number of the group or channel: ")) - 1
-    if 0 <= choice < len(groups_and_channels):
-        return groups_and_channels[choice].entity
-    else:
-        print("Invalid choice. Please try again.")
-        return await list_groups_and_channels()
+        try:
+            choice = int(input("Enter the number: "))
+            if choice == 0 and selected_groups:  # Finish if the user enters 0 and at least one group is selected
+                break
+            elif choice == 0 and not selected_groups:  # Prevent finishing if no groups are selected
+                print("Please select at least one group/channel before entering 0.")
+            elif 1 <= choice <= len(groups_and_channels):
+                selected_group = groups_and_channels[choice - 1].entity
+                if selected_group not in selected_groups:  # Prevent adding the same group multiple times
+                    selected_groups.append(selected_group)
+                    print(f"Added {groups_and_channels[choice - 1].name} to selection.")
+                else:
+                    print("This group/channel is already selected.")
+            else:
+                print("Invalid choice. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+
+    return selected_groups
 
 
-def save_message_to_json(message, filename):
+def save_message_to_json(message, filename, group_name):
     """Appends a new message to the JSON file."""
     try:
         # Load existing messages from the file
@@ -83,35 +109,48 @@ def save_message_to_json(message, filename):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(messages_data, f, ensure_ascii=False, indent=4)
 
+    check_invitation(message_dict, group_name)
 
 
 async def main():
-    group = await list_groups_and_channels()
+    groups = await list_groups_and_channels()
 
-    # Use group.title for the file name
-    safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group.title)
-    filename = f'{safe_title}_messages.json'
-
-    # Initial scrape to populate the JSON file (only once)
-    try:
-        print('here')
-        # Check if the file exists and load existing messages
-        with open(filename, 'r', encoding='utf-8') as f:
-            messages_data = json.load(f)
-            print(f"Loaded {len(messages_data)} existing messages from {filename}")
-    except FileNotFoundError:
-        messages_data = []
-        print(f"Scraping initial messages from {group.title}...")
-        async for message in client.iter_messages(group, limit=2000):
-            save_message_to_json(message, filename)
-        print(f"Initial messages saved to {filename}")
-
-    @client.on(events.NewMessage(chats=group))
+    @client.on(events.NewMessage(chats=groups))
     async def new_message_handler(event):
-        print(f"New message received in {group.title}: {event.message.text}")
-        save_message_to_json(event.message, filename)
+        # Find the group name using event.chat_id
+        group_name = next((group.title for group in groups if abs(group.id) == abs(event.chat_id)), None)
+        if group_name == None:
+            return
 
-    print(f"Listening for new messages in {group.title}...")
+        print(f"New message received in {group_name}: {event.message.text}")
+
+        # Construct the filename using the group name
+        safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group_name)
+        filename = f'{safe_title}_messages.json'
+        save_message_to_json(event.message, filename, group_name) 
+
+
+    for group in groups:
+        # Use group.title for the file name
+        safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group.title)
+        filename = f'{safe_title}_messages.json'
+
+        # Initial scrape to populate the JSON file (only once)
+        try:
+            print('here')
+            # Check if the file exists and load existing messages
+            with open(filename, 'r', encoding='utf-8') as f:
+                messages_data = json.load(f)
+                print(f"Loaded {len(messages_data)} existing messages from {filename}")
+        except FileNotFoundError:
+            messages_data = []
+            print(f"Scraping initial messages from {group.title}...")
+            async for message in client.iter_messages(group, limit=2000):
+                save_message_to_json(message, filename, group.title)
+            print(f"Initial messages saved to {filename}")
+
+        print(f"Listening for new messages in {group.title}...")
+    
     await client.run_until_disconnected() 
 
 with client:
