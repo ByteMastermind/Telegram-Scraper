@@ -1,6 +1,7 @@
 import json
 from telethon.sync import TelegramClient
 from telethon.tl.types import InputPeerChannel, PeerChannel, PeerChat
+from telethon import events
 
 # Load configuration from config.json
 def load_config():
@@ -41,55 +42,77 @@ async def list_groups_and_channels():
         print("Invalid choice. Please try again.")
         return await list_groups_and_channels()
 
-async def scrape_and_save_messages(group):
+
+def save_message_to_json(message, filename):
+    """Appends a new message to the JSON file."""
     try:
-        messages = await client.get_messages(group, limit=2000)
-
+        # Load existing messages from the file
+        with open(filename, 'r', encoding='utf-8') as f:
+            messages_data = json.load(f)
+    except FileNotFoundError:
         messages_data = []
-        for message in messages:
-            # Capture basic information
-            message_dict = {
-                'id': message.id,
-                'date': str(message.date),
-                'sender_id': message.sender_id,
-                'text': message.text,
-                'message_type': type(message).__name__,
-                'media': str(message.media) if message.media else None,
-                'is_private': message.is_private,
-                'reply_to_msg_id': message.reply_to_msg_id,
-                'via_bot_id': message.via_bot_id,
-                'sticker': str(message.sticker) if message.sticker else None,
-                'poll': str(message.poll) if message.poll else None,
-                'geo': str(message.geo) if message.geo else None,
-                'entities': [entity.to_dict() for entity in message.entities] if message.entities else [],
-            }
 
-            # If the message is forwarded, add forward details
-            if message.forward:
-                message_dict['forwarded_from'] = {
-                    'sender_id': message.forward.sender_id,
-                    'date': str(message.forward.date),
-                    'message_id': message.forward.id,
-                }
+    # Capture basic information (same as before)
+    message_dict = {
+        'id': message.id,
+        'date': str(message.date),
+        'sender_id': message.sender_id,
+        'text': message.text,
+        'message_type': type(message).__name__,
+        'media': str(message.media) if message.media else None,
+        'is_private': message.is_private,
+        'reply_to_msg_id': message.reply_to_msg_id,
+        'via_bot_id': message.via_bot_id,
+        'sticker': str(message.sticker) if message.sticker else None,
+        'poll': str(message.poll) if message.poll else None,
+        'geo': str(message.geo) if message.geo else None,
+        'entities': [entity.to_dict() for entity in message.entities] if message.entities else [],
+    }
 
-            messages_data.append(message_dict)
+    # If the message is forwarded, add forward details
+    if message.forward:
+        message_dict['forwarded_from'] = {
+            'sender_id': message.forward.sender_id,
+            'date': str(message.forward.date),
+            # 'message_id': message.forward.id,
+        }
 
-        # Use group.title for the file name, safely handling spaces and special characters
-        safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group.title)
-        filename = f'{safe_title}_messages.json'
+    messages_data.append(message_dict)
 
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(messages_data, f, ensure_ascii=False, indent=4)
+    # Save updated messages to the file
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(messages_data, f, ensure_ascii=False, indent=4)
 
-        print(f'Successfully saved {len(messages_data)} messages to {filename}')
-
-    except Exception as e:
-        print(f"Error: {e}")
 
 
 async def main():
     group = await list_groups_and_channels()
-    await scrape_and_save_messages(group)
+
+    # Use group.title for the file name
+    safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group.title)
+    filename = f'{safe_title}_messages.json'
+
+    # Initial scrape to populate the JSON file (only once)
+    try:
+        print('here')
+        # Check if the file exists and load existing messages
+        with open(filename, 'r', encoding='utf-8') as f:
+            messages_data = json.load(f)
+            print(f"Loaded {len(messages_data)} existing messages from {filename}")
+    except FileNotFoundError:
+        messages_data = []
+        print(f"Scraping initial messages from {group.title}...")
+        async for message in client.iter_messages(group, limit=2000):
+            save_message_to_json(message, filename)
+        print(f"Initial messages saved to {filename}")
+
+    @client.on(events.NewMessage(chats=group))
+    async def new_message_handler(event):
+        print(f"New message received in {group.title}: {event.message.text}")
+        save_message_to_json(event.message, filename)
+
+    print(f"Listening for new messages in {group.title}...")
+    await client.run_until_disconnected() 
 
 with client:
     client.loop.run_until_complete(main())
