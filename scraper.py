@@ -2,6 +2,8 @@ import json
 from telethon.sync import TelegramClient
 from telethon.tl.types import InputPeerChannel, PeerChannel, PeerChat
 from telethon import events
+from telethon.tl.functions.channels import JoinChannelRequest
+import re
 
 # Load configuration from config.json
 def load_config():
@@ -18,7 +20,7 @@ notification_group = config['notification_group']
 client = TelegramClient('session_name', api_id, api_hash)
 client.start(phone=phone)
 
-async def send_message_to_group(group_name):
+async def send_notification_to_group(group_name):
     # Search for the group by name
     entity = await client.get_entity(notification_group)
     
@@ -27,16 +29,48 @@ async def send_message_to_group(group_name):
     # Send the message
     await client.send_message(entity, message)
 
+# Define the pattern for private channel invitation links
+private_channel_invitation_pattern = re.compile(r'https://t\.me/\+\w+')
+
 async def is_invitation(message_dict, group_name):
-    if message_dict.get('media') and 'MessageMediaWebPage' in message_dict['media'] and "site_name='Telegram'" in message_dict['media']:
-        print(f"Invitation detected in {group_name}, message id: {message_dict['id']}.")
-        return True  # Invitation detected
-    return False  # No invitation detected
+    # Initialize the invitation link variable
+    invitation_link = None
+    
+    # Check for media properties indicating an invitation
+    if (
+        message_dict.get('media') and 
+        'MessageMediaWebPage' in message_dict['media'] and 
+        "site_name='Telegram'" in message_dict['media']
+    ):
+        print(f"Media-based invitation detected in {group_name}, message id: {message_dict['id']}.")
+        return True, invitation_link  # Return True, but no specific link extracted
+    
+    # Check for a private invitation link in the message text
+    if 'text' in message_dict:
+        match = private_channel_invitation_pattern.search(message_dict['text'])
+        if match:
+            invitation_link = match.group(0)  # Extract the invitation link
+            print(f"Link-based invitation detected in {group_name}, link: {invitation_link}, message id: {message_dict['id']}.")
+            return True, invitation_link  # Return True and the extracted link
+    
+    return False, None  # No invitation detected
 
 async def check_invitation(message_dict, group_name):
-    is_message_invitation = await is_invitation(message_dict, group_name)
+    # Check if the message contains an invitation and extract the link
+    is_message_invitation, invitation_link = await is_invitation(message_dict, group_name)
     if is_message_invitation:
-        await send_message_to_group(group_name)
+        # Use the invitation link if found
+        if invitation_link:
+            print(f"Detected private channel invitation link: {invitation_link}")
+            
+            # Join the group or channel
+            try:
+                joined_channel = await client(JoinChannelRequest(invitation_link))
+                print(f"Successfully joined the channel: {joined_channel.chats[0].title}")
+            except Exception as e:
+                print(f"Failed to join the channel: {e}")
+        
+        await send_notification_to_group(group_name)
 
 async def list_groups_and_channels():
     dialogs = await client.get_dialogs()
