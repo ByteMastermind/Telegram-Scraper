@@ -67,6 +67,22 @@ async def check_invitation(message_dict, group_name):
             try:
                 joined_channel = await client(JoinChannelRequest(invitation_link))
                 print(f"Successfully joined the channel: {joined_channel.chats[0].title}")
+                
+                # Add the joined channel to the watched groups list
+                new_group = joined_channel.chats[0]
+                groups.append(new_group)
+                print(f"Added new group to watchlist: {new_group.title}")
+                
+                # Register the new group to listen for new messages
+                @client.on(events.NewMessage(chats=[new_group]))
+                async def new_group_message_handler(event):
+                    print(f"New message received in {new_group.title}: {event.message.text}")
+                    
+                    # Save message to JSON
+                    safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in new_group.title)
+                    filename = f'{safe_title}_messages.json'
+                    await save_message_to_json(event.message, filename, new_group.title)
+
             except Exception as e:
                 print(f"Failed to join the channel: {e}")
         
@@ -157,13 +173,14 @@ async def save_message_to_json(message, filename, group_name):
 
 
 async def main():
+    global groups  # Ensure 'groups' is accessible for modification
     groups = await list_groups_and_channels()
 
     @client.on(events.NewMessage(chats=groups))
     async def new_message_handler(event):
         # Find the group name using event.chat_id
         group_name = next((group.title for group in groups if abs(group.id) == abs(event.chat_id)), None)
-        if group_name == None:
+        if group_name is None:
             return
 
         print(f"New message received in {group_name}: {event.message.text}")
@@ -173,7 +190,6 @@ async def main():
         filename = f'{safe_title}_messages.json'
         await save_message_to_json(event.message, filename, group_name) 
 
-
     for group in groups:
         # Use group.title for the file name
         safe_title = ''.join(c if c.isalnum() or c in ('_') else '_' for c in group.title)
@@ -182,7 +198,6 @@ async def main():
         # Initial scrape to populate the JSON file (only once)
         try:
             print('here')
-            # Check if the file exists and load existing messages
             with open(filename, 'r', encoding='utf-8') as f:
                 messages_data = json.load(f)
                 print(f"Loaded {len(messages_data)} existing messages from {filename}")
@@ -195,7 +210,8 @@ async def main():
 
         print(f"Listening for new messages in {group.title}...")
     
-    await client.run_until_disconnected() 
+    await client.run_until_disconnected()
+
 
 with client:
     client.loop.run_until_complete(main())
